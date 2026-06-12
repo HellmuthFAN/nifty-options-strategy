@@ -1,56 +1,73 @@
-# Nifty Options Strategy — Systematic Put-Writing with Drawdown Accumulation
+# Systematic Nifty Put-Writing Strategy — Backtest & P&L Attribution
 
-A monthly Nifty-50 options strategy, backtested from **Dec 2012 to mid-2025** and
-benchmarked against buy-and-hold. The strategy collects option premium by writing
-out-of-the-money puts and **adds long exposure after losses** — a "penalizer" /
-dip-accumulation rule.
-
-> **Note:** this is *not* a straddle. It is a short-put + spot-accumulation
-> strategy (see logic below).
+A 12-year event-driven backtest (2013–2025, 149 monthly cycles) of a systematic Nifty
+index **put-writing strategy**, with full P&L attribution. Built in Python — spot data
+from Yahoo Finance, option premia from the NSE F&O bhavcopy.
 
 ---
 
-## Strategy logic
+## Strategy (the "wheel")
 
-- Hold a **long Nifty spot** position.
-- **Sell 2% OTM puts monthly** and collect the premium.
-- **Exit spot at +3% profit** (profit-taking; no stop loss).
-- **Loss-triggered accumulation ("penalizer"):** whenever a written put expires
-  **in-the-money** (a loss), open a **new long spot position** at the settlement
-  price — so drawdowns *increase* exposure.
-- **Put settlement:** keep the full premium if Nifty closes above the strike;
-  otherwise the P&L is `premium − (strike − settlement)`.
-- Performance is compared against a Nifty **buy-and-hold** benchmark.
+- Each monthly expiry, **write (sell) a 2% OTM Nifty put** and collect the premium.
+- If it expires **OTM** → keep the full premium and re-write the next month.
+- If it is **assigned (ITM)** → convert into a **long index position** at settlement and
+  **hold it to recovery**, squaring off at **+3%** (no stop loss).
+- NAV is tracked on a **one-NIFTY-unit capital basis**.
 
----
+## Results *(verified, one NIFTY unit of capital)*
+
+| Metric | Value |
+|---|---|
+| Cumulative return | **~294%** |
+| CAGR | **11.7%** |
+| Sharpe (rf = 0) | **~1.2** |
+| Max drawdown | **−21%** (Mar 2020, COVID) |
+| Positive months | **82%** |
+| Buy-and-hold CAGR (benchmark) | ~12.4% |
+
+## The key finding — where the profit actually comes from
+
+Full P&L attribution over the 12 years:
+
+| Leg | NIFTY pts | Share |
+|---|---:|---:|
+| Premium collected (OTM puts) | +13,539 | |
+| Assignment losses (ITM puts) | −9,238 | |
+| **Net option leg** | **+4,301** | **25%** |
+| **Spot recovery leg** | **+12,984** | **75%** |
+| **Total** | **+17,285** | **100%** |
+
+**~75% of the profit comes from riding assigned positions back up (mean-reversion), not
+from the option premium.** This is really a *conditional long-beta / mean-reversion bet
+wearing a put-selling costume* — and it in fact slightly **underperforms buy-and-hold
+(−0.6%/yr)**, because the +3% take-profit caps the upside.
+
+## Caveats *(read before trusting the Sharpe)*
+
+- **No margin model.** Short-put margin (SPAN + ELM) balloons during the exact vol spike
+  that assigns you — in March 2020 that could have forced liquidation at the −21% trough,
+  before any recovery.
+- **No costs / slippage.** The thin +4,301 net option leg is the most fragile part; a few
+  points of bid–ask per put eats into it directly.
+- **Regime-dependent.** The edge relies on V-shaped recoveries; the 2013–25 sample is a
+  near-uninterrupted Indian bull market.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `src/nifty_options_backtest.py` | Event-driven backtest — month-end option data + Nifty OHLC (via Yahoo Finance), produces NAV, CAGR, win-rate, yearly P&L and a buy-and-hold comparison; writes an Excel report |
-| `src/nifty_options_updated.py`  | Pulls month-end NIFTY OTM option premia from the NSE F&O bhavcopy with multi-endpoint fallbacks |
-| `src/nse_url_generator.py`      | Generates and tests NSE bhavcopy download URLs (last trading day per month) |
-| `src/capital_calculation_explanation.py` | Walkthrough of the capital-allocation / NAV / CAGR methodology |
+| `src/nifty_options_backtest.py` | Canonical event-driven backtest — NAV, CAGR, Sharpe, max-drawdown, P&L attribution, buy-and-hold comparison (runs on Yahoo Finance data) |
+| `src/nifty_options_updated.py` | Pulls month-end NIFTY option premia from the NSE F&O bhavcopy (multi-endpoint fallback) |
+| `src/nse_url_generator.py` | Builds and tests NSE bhavcopy download URLs |
+| `src/capital_calculation_explanation.py` | NAV / capital-allocation methodology walkthrough |
 
-## Data sources
-
-- **Option premia:** NSE F&O bhavcopy (month-end, last trading day).
-- **Spot OHLC:** Yahoo Finance `^NSEI`.
-
-## Running
+## Run
 
 ```bash
 pip install pandas numpy yfinance requests openpyxl python-dateutil
 python src/nifty_options_backtest.py
 ```
 
-## Caveats
-
-The backtest assumes **no transaction costs, taxes, or slippage** and perfect fills
-at the stated month-end prices. Real-world results — especially for a frequent
-put-writing strategy — would be materially lower. For research / educational use.
-
 ## Tech
 
-Python · pandas · NumPy · yfinance · requests
+Python · pandas · NumPy · yfinance · NSE F&O bhavcopy

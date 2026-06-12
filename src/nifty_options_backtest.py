@@ -2,6 +2,11 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import io
+import sys
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
@@ -197,6 +202,8 @@ print(f"Options data loaded: {len(df)} records from {df['Date'].min().date()} to
 print("Downloading Nifty historical data from Yahoo Finance...")
 try:
     nifty_data = yf.download("^NSEI", start="2012-12-26", end="2025-07-31", progress=False)
+    if hasattr(nifty_data.columns, "nlevels") and nifty_data.columns.nlevels > 1:
+        nifty_data.columns = nifty_data.columns.get_level_values(0)
     print(f"Nifty data downloaded: {len(nifty_data)} records from {nifty_data.index.min().date()} to {nifty_data.index.max().date()}")
 except Exception as e:
     print(f"Error downloading data: {e}")
@@ -206,7 +213,7 @@ except Exception as e:
 
 # Strategy parameters
 lot_size = 1  # Position size for options
-initial_nav = 100000  # Starting NAV base
+initial_nav = 5870.1  # one NIFTY unit of capital (per-unit NAV basis)
 profit_target_pct = 0.03  # 3% profit target for spot positions
 
 # Initialize tracking variables
@@ -406,6 +413,12 @@ if len(log_df) > 0:
         cagr = (final_nav / initial_nav) ** (1/years_elapsed) - 1
     else:
         cagr = 0
+
+    # Risk metrics on the event-based NAV curve
+    _nav = log_df.set_index("Date").sort_index()["NAV"]
+    _mret = _nav.resample("M").last().dropna().pct_change().dropna()
+    sharpe = (_mret.mean()/_mret.std())*(12**0.5) if _mret.std()>0 else float("nan")
+    max_dd = ((_nav-_nav.cummax())/_nav.cummax()).min()
     
     # Print summary
     print(f"\nFINAL PERFORMANCE SUMMARY")
@@ -416,12 +429,28 @@ if len(log_df) > 0:
     print(f"Total Return: {((final_nav/initial_nav - 1) * 100):.2f}%")
     print(f"Years Elapsed: {years_elapsed:.2f}")
     print(f"CAGR: {(cagr * 100):.2f}%")
+    print(f"Sharpe (annualized, rf=0): {sharpe:.2f}")
+    print(f"Max Drawdown: {max_dd*100:.2f}%")
     print(f"Total Trades: {len(log_df)}")
     
     print(f"\nP&L BY TRADE TYPE:")
     print("-" * 30)
     for _, row in pnl_by_type.iterrows():
         print(f"{row['Trade_Type']}: {row['Total_PnL']:,.0f} ({row['Count']} trades)")
+
+    # --- P&L ATTRIBUTION: where does the profit actually come from? ---
+    _by = dict(zip(pnl_by_type['Trade_Type'], pnl_by_type['Total_PnL']))
+    premium = _by.get('Option_Profit', 0.0)      # premium kept when puts expire OTM
+    assignment = _by.get('Option_Loss', 0.0)     # net loss when puts are assigned (ITM)
+    net_option = premium + assignment
+    recovery = _by.get('Spot_Exit', 0.0)         # riding assigned longs back up to +3%
+    grand = net_option + recovery
+    print("")
+    print("P&L ATTRIBUTION:")
+    print(f"  Premium collected (OTM puts): {premium:,.0f}")
+    print(f"  Assignment losses (ITM puts): {assignment:,.0f}")
+    print(f"  Net option leg:    {net_option:,.0f}  ({net_option/grand*100:.0f}% of profit)")
+    print(f"  Spot recovery leg: {recovery:,.0f}  ({recovery/grand*100:.0f}% of profit)")
     
     print(f"\nYEARLY PERFORMANCE:")
     print("-" * 40)
